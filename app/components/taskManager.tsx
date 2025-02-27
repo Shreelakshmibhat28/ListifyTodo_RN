@@ -1,34 +1,74 @@
 import React, { useState } from "react";
-import { 
-    View, 
-    Text, 
-    TextInput, 
-    TouchableOpacity, 
-    FlatList, 
-    StyleSheet 
+import {
+    View,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    FlatList,
+    StyleSheet,
 } from "react-native";
-import { useQuery, useMutation } from "@apollo/client";
-import { GET_TODOS, ADD_TODO, UPDATE_TODO, DELETE_TODO } from "../graphql/queries";
+import { ApolloClient, InMemoryCache, ApolloProvider, useMutation, gql } from "@apollo/client";
+import { GET_TODOS } from "../graphql/queries";
+
+const client = new ApolloClient({
+    uri: "https://graphqlzero.almansi.me/api",
+    cache: new InMemoryCache(),
+});
+
+const ADD_TODO = gql`
+    mutation AddTodo($title: String!) {
+        createTodo(input: { title: $title }) {
+            id
+            title
+        }
+    }
+`;
+
+const UPDATE_TODO = gql`
+    mutation UpdateTodo($id: ID!, $title: String!) {
+        updateTodo(id: $id, input: { title: $title }) {
+            id
+            title
+        }
+    }
+`;
+
+const DELETE_TODO = gql`
+    mutation DeleteTodo($id: ID!) {
+        deleteTodo(id: $id)
+    }
+`;
 
 const TaskManager: React.FC = () => {
     const [task, setTask] = useState<string>("");
     const [editTaskId, setEditTaskId] = useState<string | null>(null);
-    
-    const { data, refetch } = useQuery(GET_TODOS);
-    const [addTodo] = useMutation(ADD_TODO);
-    const [updateTodo] = useMutation(UPDATE_TODO);
-    const [deleteTodo] = useMutation(DELETE_TODO);
+    const [localTasks, setLocalTasks] = useState<{ id: string; title: string }[]>([]);
 
+    const [addTodo] = useMutation(ADD_TODO, {
+        refetchQueries: [{ query: GET_TODOS }],
+    });
+    
+    const [updateTodo] = useMutation(UPDATE_TODO, {
+        refetchQueries: [{ query: GET_TODOS }],
+    });
+    
+    const [deleteTodo] = useMutation(DELETE_TODO, {
+        refetchQueries: [{ query: GET_TODOS }],
+    });
+    
     const handleAddOrUpdateTask = async () => {
         if (task) {
             if (editTaskId) {
                 await updateTodo({ variables: { id: editTaskId, title: task } });
+                setLocalTasks((prevTasks) =>
+                    prevTasks.map((t) => (t.id === editTaskId ? { id: editTaskId, title: task } : t))
+                );
                 setEditTaskId(null);
             } else {
-                await addTodo({ variables: { title: task } });
+                const { data } = await addTodo({ variables: { title: task } });
+                setLocalTasks((prevTasks) => [...prevTasks, { id: data.createTodo.id, title: task }]);
             }
             setTask("");
-            refetch();
         }
     };
 
@@ -39,7 +79,7 @@ const TaskManager: React.FC = () => {
 
     const handleDeleteTask = async (id: string) => {
         await deleteTodo({ variables: { id } });
-        refetch();
+        setLocalTasks((prevTasks) => prevTasks.filter((t) => t.id !== id));
     };
 
     const renderItem = ({ item }: { item: { id: string; title: string } }) => (
@@ -57,26 +97,28 @@ const TaskManager: React.FC = () => {
     );
 
     return (
-        <View style={styles.container}>
-            <Text style={styles.heading}>LISTIFY</Text>
-            <Text style={styles.title}>Simplify Your Tasks, Elevate Your Productivity!!</Text>
-            <TextInput
-                style={styles.input}
-                placeholder="Add your task here!!"
-                value={task}
-                onChangeText={setTask}
-            />
-            <TouchableOpacity style={styles.addButton} onPress={handleAddOrUpdateTask}>
-                <Text style={styles.addButtonText}>
-                    {editTaskId ? "Update Task" : "Add Task"}
-                </Text>
-            </TouchableOpacity>
-            <FlatList
-                data={data?.todos?.data || []}
-                renderItem={renderItem}
-                keyExtractor={(item) => item.id}
-            />
-        </View>
+        <ApolloProvider client={client}>
+            <View style={styles.container}>
+                <Text style={styles.heading}>LISTIFY</Text>
+                <Text style={styles.title}>Simplify Your Tasks, Elevate Your Productivity!!</Text>
+                <TextInput
+                    style={styles.input}
+                    placeholder="Add your task here!!"
+                    value={task}
+                    onChangeText={setTask}
+                />
+                <TouchableOpacity style={styles.addButton} onPress={handleAddOrUpdateTask}>
+                    <Text style={styles.addButtonText}>
+                        {editTaskId ? "Update Task" : "Add Task"}
+                    </Text>
+                </TouchableOpacity>
+                <FlatList
+                    data={localTasks}
+                    renderItem={renderItem}
+                    keyExtractor={(item) => item.id}
+                />
+            </View>
+        </ApolloProvider>
     );
 };
 
